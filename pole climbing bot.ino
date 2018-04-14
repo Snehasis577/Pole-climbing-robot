@@ -1,432 +1,275 @@
+
+// import necessary header files
+#include <PS4USB.h>
 #include <Servo.h>
-bool f = 0;
-int th=40;
-Servo myservo;
-//ldr pins
-byte ldr = 25;
-//nex line sensor  pins....................................
-byte nex[7] = {A6, A5, A4, A3, A2, A1, A0};
+#ifdef dobogusinclude
+#include <spi4teensy3.h>
+#include <SPI.h>
+#endif
+// creat objects
+USB Usb;
+Servo myservo; 
+PS4USB PS4(&Usb);
+//int upd1 = 25;
+//int upd2 = 34;
+//int pld = 35;
+//int plp = 5;
+//int qrd = 33;
+//int qrp = 4;
+int spamp=30;
+float scale_factor = 1;
+//       motor configuration:
+//---------------------------------------------
+//     | motor2(fld,fla)   |   motor1(frd,fra) |
+//---------------------------------------------
+//     | motor3(bld,bla)   |   motor4(brd,bra) |
+//---------------------------------------------
+// motor pin variables
+//byte frd = 47, fld = 49, bld = 33, brd = 43, fra = 11, fla = 12, bla = 4, bra = 9;// available pins
+byte frd=31,fld=35,bld=37,brd=23,fra=8,fla=9,bla=11,bra=4;
+int  d1, d2, d3, d4;
+byte ser_pin=7,pole_motor=29,polem_dir=3;
+//bla=8;
+//bld=41;
+// inverse kinematics variables
+int w, x, y, xl, yl, ps = 90;
+float a11 = -0.35, a12 = 0.35, a13 = 0.25;
+float a21 = -0.35, a22 = -0.35, a23 = 0.25;
+float a31 = 0.35, a32 = -0.35, a33 = 0.25;
+float a41 = 0.35, a42 = 0.35, a43 = 0.25;
 
-//ultrasonic pins..........................................
-byte aus = A13, dus = 53;
-
-//servo pins...............................................
-byte sersw = 23, sersig = 13;
-
-//led pins.................................................
-byte led[3] = {47, 49, 51};
-
-//motordriver pins.........................................
-byte ra = 2, rd = 3, la = 4, ld = 5, pr1 = 7, pr2 = 6;
-
-
-//data variables.........................
-float sv[7], ps[7];
-int nexmin = 100;
-int nexmax = 100;
-byte ser_max=180,ser_min=90;
-byte ud = 0, jwidth = 4;
-int  ua = 0;
-
-//SPEED VARIABLE..............
-float speed_max = 220; //MAX SPEED OF MOTTORS
-float speed_right = 0; //RIGHT MOTOR SPEED
-float speed_left = 0; //LEFT MOTOR SPEED
-byte turn_speed = 100;
-bool dir_right = 0;
-bool dir_left = 0;
-byte pos;
-byte dir = 0;
-
-
-// delay variables
-int fd = 50, td = 350, sd = 100;
-
-// PID VARIABLE...............
-float kp = 5.4; // CONSTANT KP 6
-float ki = 0.025; // CONSTANT KI0.031  0.081
-float kd = 50; // CONSTANT KD 50
-double pid_val;//TOTAL pid_val=kp*error+ki*integral+kd*prop
-float error, value, prop, last_error, integral, sum = 0, son = 0;
-float limit = 2000;
-
+// speed variables.................
+float sp = 3.0;
+float s1, s2, s3, s4;
+// flag variables
+byte servo_lock=0,climb=0;
 void setup() {
-  // put your setup code here, to run once:
-
+  //initialise pins for motor
+  myservo.attach(ser_pin);
+  pinMode(fra, OUTPUT);
+  pinMode(frd, OUTPUT);
+  pinMode(fla, OUTPUT);
+  pinMode(fld, OUTPUT);
+  pinMode(bla, OUTPUT);
+  pinMode(bld, OUTPUT);
+  pinMode(bra, OUTPUT);
+  pinMode(brd, OUTPUT);
+  pinMode(pole_motor, OUTPUT);
+  pinMode(polem_dir, OUTPUT);
   Serial.begin(115200);// initialise serial communication
-  myservo.attach(13); // inititalise the servo
-  myservo.write(180);// set servo position to 180 degrees
-
-  // initalise the pins for sensor and motor asper requirement
-  pinMode(ldr, INPUT);
-  pinMode(aus, INPUT);
-  pinMode(dus, INPUT);
-  pinMode(sersw, INPUT);
-  for (int i = 0; i < 7; i++)
-    pinMode(nex[i], INPUT);
-  pinMode(led[0], OUTPUT);
-  pinMode(led[1], OUTPUT);
-  pinMode(led[2], OUTPUT);
-  pinMode(ra, OUTPUT);
-  pinMode(rd, OUTPUT);
-  pinMode(la, OUTPUT);
-  pinMode(ld, OUTPUT);
-  pinMode(pr1, OUTPUT);
-  pinMode(pr2, OUTPUT);
-  caliberate();
-}
-void pid_calculate()//function to calculate pid values
-{
-  // pid algorithm............................
-  error = value - 36;               //36 is the requied position(set point)
-  prop = error - last_error;
-  integral = integral + error;
-  integral = integral > limit ? limit : integral;
-  integral = (integral < -limit && integral < 0) ? -limit : integral;
-  last_error = error;
-  pid_val = kp * error + ki * integral + kd * prop;
-  //print the values
-  Serial.println();
-  Serial.print(" sum=   ");
-  Serial.println(value);
-
-  Serial.print("error  "); Serial.print(error);
-  Serial.print("last_error  "); Serial.print(last_error);
-  Serial.print("prop  "); Serial.print(prop);
-  Serial.print("integral  "); Serial.print(integral);
-  Serial.print("pid_val  "); Serial.println(pid_val);
-
-}
-void leftturn(int x) //function for turn left
-{
-  
-  while (sv[0] == 0) {
-    read_nex();
-    analogWrite(ra, turn_speed);
-    digitalWrite(rd, 0);
-    analogWrite(la, turn_speed);
-    digitalWrite(ld, 1);
-    delay(x);
+  // ps4 library setup
+#if !defined(__MIPSEL__)
+  while (!Serial); // Wait for serial port to connect - used on Leonardo, Teensy and other boards with built-in USB CDC serial connection
+#endif
+  if (Usb.Init() == -1) {
+    Serial.print(F("\r\nOSC did not start"));
+    while (1); // Halt
   }
-}
-void rightturn(int x) //function for turn left
-{
-  while (sv[6] == 0) {
-    read_nex();
-    analogWrite(ra, turn_speed);
-    digitalWrite(rd, 1);
-    analogWrite(la, turn_speed);
-    digitalWrite(ld, 0);
-    delay(x);
-  }
-}
-void back(int x) //function for reverse direction motion
-{
-  analogWrite(ra, turn_speed);
-  digitalWrite(rd, 1);
-  analogWrite(la, turn_speed);
-  digitalWrite(ld, 0);
-  delay(x);
-}
-void forward(int x) // function for straight heading
-{
-  analogWrite(ra, speed_max - 100);
-  digitalWrite(rd, 0);
-  analogWrite(la, speed_max - 100);
-  digitalWrite(ld, 0);
-  delay(fd);
-}
-void motion()//function to command motors
-{
-
-  if (pid_val < 0)
-  {
-    speed_left = speed_max + pid_val;
-    speed_right = speed_max;
-    if (speed_left < 0)
-      speed_left = 5;
-  }
-  else
-  {
-    speed_left = speed_max;
-    speed_right = speed_max - pid_val;
-    if (speed_right < 0)
-      speed_right = 5;
-  }
-
-
-  analogWrite(ra, speed_right);
-  analogWrite(la, speed_left);
-  digitalWrite(rd, dir_right);
-  digitalWrite(ld, dir_left);
-}
-void stopp()// sudden stop function
-{
-  analogWrite(ra, 70);
-  analogWrite(la, 70);
-  digitalWrite(rd, 1);
-  digitalWrite(ld, 1);
-  delay(sd);
-  analogWrite(ra, 0);
-  analogWrite(la, 0);
-  digitalWrite(rd, 1);
-  digitalWrite(ld, 1);
-}
-void stoppe()// function for free stop
-{
-
-  analogWrite(ra, 0);
-  analogWrite(la, 0);
-  digitalWrite(rd, 1);
-  digitalWrite(ld, 1);
+  Serial.print(F("\r\nPS4 USB Library Started"));
 }
 
-void read_nex()// function to read the nex line sensor
-{
 
-  son = 0;
-  sum = 0;
-  for (int j = 0; j < 7; j++)
-  {
-  //  sv[j] = !digitalRead(nex[j]) * (1023 - analogRead(nex[j]));   // for black background
-      sv[j] = digitalRead(nex[j]) * (analogRead(nex[j]));   //for white background
-      Serial.print(sv[j]);
-      Serial.print("    ");
-      sv[j] = map(sv[j],nexmin, nexmax, 0, 10);// map sensor value to 0-10
-      Serial.print(sv[j]);
-      // calculate weighted sum and  average value
-    if (sv[j] >= 1)
-    {
-      son++;
-      sum = sum + (sv[j] * (j + 1));
-
-    }
-
-    Serial.print("    ");
-  }
-
-  value = sum / son;
-}
-void print_nex()// function to print sensor value to serial monitor and store the current sensor value in ps[]
-{
-   for (int j = 0; j < 7; j++)
-  {
-    ps[j] = sv[j];
-    Serial.print(sv[j]);
-    Serial.print("    ");
-  }
-  Serial.println();
-}
-
-void ultra_read()// function to read ultrasonic sensor
-{
-  
-  ud = digitalRead(dus);
-  ua = analogRead(aus);
-}
-void caliberate()// function for automatic caliberation of line sensor
-{
-  digitalWrite(led[0], 1);
-  nexmin = analogRead(nex[3]);
-  nexmax = nexmin;
-  for (int n = 0; n <= 5000; n++)
-  {
-    for (int j = 0; j < 7; j++)
-    {
-      sv[j] = analogRead(nex[j]);
-      if (sv[j] > nexmax)
-        nexmax = sv[j];
-      if (sv[j] < nexmin)
-        nexmin = sv[j];
-    }
-  }
-  Serial.println(nexmax);
-   Serial.println(nexmin);
-  digitalWrite(led[0], 0);
-
-
-}
-//######################### LOOP FUNCTION #############################################//////////////////////////////////////////
 void loop() {
-
-  // put your main code here, to run repeatedly:
-  read_nex();
-  ultra_read();    //  pid_calculate();
-  motion();
-  if(ua<=33)
-  door();
-  // if all sensors have 0 value
-  if (son == 0 )
+  Usb.Task();
+  if (PS4.connected())
   {
-    digitalWrite(led[2], HIGH);
-    stoppe();
-    Serial.println(dir);
-    digitalWrite(led[2], LOW);
-    // go back if bot gets out of line go back to find the line
-    while (sv[6] == 0 && sv[5] == 0 && sv[4] == 0 &&sv[3] == 0 && sv[2] == 0 && sv[1] == 0 && sv[0] == 0 )
-    { read_nex();
-      back(1);
-    }
 
-  }
-  else if (son >= jwidth)// if junction detected
-  {
-    read_nex();
-    //  read_nex();
-    print_nex();
-
-    dir = 1;
-    stopp();
-    stoppe();
-
-    if (son >= jwidth + 2)
+    if (PS4.getButtonClick(UP))// increase speed of motion
     {
-      dir = 2;
-    }
 
-    read_nex();
+      if (sp <= 10)
+      { sp = sp + 0.5;
 
-    // read_nex();
-    if (son >= 1)
-    { dir = 3;
-    }
-    if (dir == 1)
-    {
-      if ((ps[0] >= 1 && ps[1] >= 1) && ps[2] >= 1 && ps[3] >= 1)
-      {
-        digitalWrite(led[1], HIGH);
-        // forward(fd);
-        //forward(20);
-
-        leftturn(1);
-        //  forward(20);
-        digitalWrite(led[1], LOW);
-
-      }
-      else if (ps[3] >= 1 && ps[4] >= 1 && (ps[5] >= 1 || ps[6] >= 1))
-      {
-        digitalWrite(led[1], HIGH);
-        //forward(fd);
-        //  forward(20);
-
-        rightturn(1);
-
-        digitalWrite(led[1], LOW);
+        Serial.print(F("\r\nUp\n"));
+        Serial.print(sp);
+        PS4.setLed(Red);
       }
     }
-    else if (dir == 2)
+    if (PS4.getButtonClick(DOWN))// decrease speed of motion
     {
-      // forward(20);
 
-      leftturn(1);
-      //rightturn(td);
+      if (sp > 0)
+      { sp = sp - 0.5;
+        Serial.print(F("\r\nDOWN\n"));
+        Serial.print(sp);
+        PS4.setLed(Green);
+      }
     }
-    else if (dir == 3)
+   
+    if (PS4.getButtonClick(L1))
     {
-      digitalWrite(led[0], 1);
-      digitalWrite(led[1], 1);
-      if ((ps[0] >= 1 && ps[1] >= 1) && ps[2] >= 1 && ps[3] >= 1)
+     
+     servo_lock=!servo_lock;
+     if(servo_lock)
+     {
+      for (int pos = 0; pos <= 180; pos += 1) { // servo moves from 0 degrees to 180 degrees in steps of 1 degree
+        myservo.write(pos);              
+        delay(5);              
+     }
+     }
+     else
+     {
+      analogWrite(pole_motor,0);//STOP POLE MOTORS FIRST 
+      for (int pos = 180; pos >= 0; pos -= 1) { // Servo moves from 180 degrees to 0 degrees
+         myservo.write(pos);              
+          delay(5);                       
+     }
+     }
+    }
+    if (PS4.getButtonClick(R1))
+    {
+      climb=!climb;
+      if(climb)
       {
-        // forward(20);
-        // forward(fd);
-
-        leftturn(1);
+        digitalWrite(polem_dir, LOW);//CLIMB UP
+        analogWrite(pole_motor,180);
       }
       else
       {
-        pid_calculate();
-        motion();
+        digitalWrite(polem_dir, HIGH);//CLIMB DOWN
+        analogWrite(pole_motor,180);
       }
-      digitalWrite(led[0], 0);
-      digitalWrite(led[1], 0);
+        
+      }
+     
+    
 
-    }
-    //        stoppe();
-    //        while (1)
-    //        {
-    //          print_nex();
-    //          // stoppe();
-    //        }
-    //
-    //      }
-  }
-  else
-  {
-    pid_calculate();
-    motion();
-  }
-  //Serial.println("");
-  //for (int j=0;j<7;j++)
-  //  {sv[j]=analogRead(nex[j]);
-  //   value = map(sv[j], 0, 255, 0, 10);
-  //Serial.print(value);
-  //Serial.print("    ");}
-  //Serial.println("");
-
-
-}
-//###############################END OF LOOP #########################################
-void start()
-{
-  f = digitalRead(23);
-
-  for (pos = ser_max; pos >= ser_min; pos--)
+    if (PS4.getAnalogHat(RightHatX) > 157 | PS4.getAnalogHat(RightHatX) < 100)
     {
-      myservo.write(pos);
-      delay(15);
-    }
-  while (f)
-
-  { Serial.write("caliberating sensors");
-    f = digitalRead(23);
-    Serial.println(analogRead(aus));
-
-
-    if (analogRead(aus) <=th)
-    {Serial.println(analogRead(aus));
-      digitalWrite(led[0], HIGH);
-    }
-    else
-      digitalWrite(led[0], 0);
+      //get xy postion values of left and righ analog hats
+      // x & y are used for heading in direction relative to head of robot
+      x=PS4.getAnalogHat(RightHatX);
+      y=PS4.getAnalogHat(RightHatY);
+      xl = PS4.getAnalogHat(LeftHatX);
+      yl = PS4.getAnalogHat(LeftHatY);
       
-    if (digitalRead(ldr) == 1)
-      digitalWrite(led[1], HIGH);
-    else
-      digitalWrite(led[1], 0);
-  }
-  for (pos = ser_min; pos <= ser_max; pos++)
-  {
-    myservo.write(pos);
-    delay(15);
-  }
+      // print the values
+      Serial.print("x=");
+      Serial.print(x);
+      Serial.print(" y=");
+      Serial.print(y);
+      Serial.print(" s1=");
+      Serial.print(s1);
+      Serial.print(" s2=");
+      Serial.print(s2);
+      Serial.print(" s3=");
+      Serial.print(s3);
+      Serial.print(" s4=");
+      Serial.println(s4);
+      
+      // inverse kinematics aLgorithm to compute speeds of motor for heading
+      x -= 128;
+      y -= 128;
+      x = -x;
+      if (xl < 57)
+      {
+        w = xl-127;    
+      }
+      else if (xl > 197)
+      { w = xl-127;
+      }
+      else w = 0;
+      s1 = sp * ((a11 * x) + (a12 * y) + (a13 * w));
+      s2 = sp * ((a21 * x) + (a22 * y) + (a23 * w));
+      s3 = sp * ((a31 * x) + (a32 * y) + (a33 * w));
+      s4 = sp * ((a41 * x) + (a42 * y) + (a43 * w));
+      if (s1 < 0)
+      {
+        s1 = -s1;
+        d1 = 1;
+      }
+      else
+      {
+        d1 = 0;
+      }
+      if (s2 < 0)
+      {
+        s2 = -s2;
+        d2 = 1;
+      }
+      else
+      {
+        d2 =0;
+      }
+      if (s3 < 0)
+      {
+        s3 = -s3;
+        d3 = 0;
+      }
+      else
+      {
+        d3 = 1;
+      }
 
-  
-  
-}
-void door()
-{
-  stopp();
-  for (pos =ser_max; pos >= ser_min; pos--)
-    {
-      myservo.write(pos);
-      delay(15);
+      if (s4 < 0)
+      {
+        s4 = -s4;
+        d4 = 1;
+      }
+      else
+      {
+        d4 = 0;
+      }
+      
+      motion();
     }
-   while(1)
-   Serial.println("door found");
-//  if(digitalRead(ldr) == 1)
-//  {
-//    while(digitalRead(ldr) == 1)
-//    digitalWrite(27,HIGH);
-//  }
-//digitalWrite(27,LOW);
-// for (pos = 110; pos <= 180; pos++)
-//    {
-//      myservo.write(pos);
-//      delay(15);
-//    }
-  
+
+    else if (PS4.getAnalogHat(LeftHatX)< 57  )//yaw left
+    {
+      digitalWrite(frd, 1);
+      digitalWrite(fld, 1);
+      digitalWrite(brd, 1);
+      digitalWrite(bld, 0);
+      analogWrite(fra, 70);
+      analogWrite(fla, 70);
+      analogWrite(bla, 70);
+      analogWrite(bra, 70);
+    }
+    else if ( PS4.getAnalogHat(LeftHatX)> 197 )// yaw right
+    {
+      digitalWrite(frd, 0);
+      digitalWrite(fld, 0);
+      digitalWrite(brd, 0);
+      digitalWrite(bld, 1);
+      analogWrite(fra, 70);
+      analogWrite(fla, 70);
+      analogWrite(bla, 70);
+      analogWrite(bra, 70);
+    }
+
+    
+
+
+    else
+    {
+      stopp();
+
+    }
+
+}
+}
+void stopp()// stop function for base motors
+{
+  digitalWrite(frd, d1);
+      digitalWrite(fld, d2);
+      digitalWrite(brd, d4);
+      digitalWrite(bld, d3);
+      analogWrite(fra, 0);
+      analogWrite(fla, 0);
+      analogWrite(bla, 0);
+      analogWrite(bra, 0);
 }
 
+void motion()// function to command base motors
+{
 
+  digitalWrite(frd, d1);
+  digitalWrite(fld, d2);
+  digitalWrite(brd, d4);
+  digitalWrite(bld, d3);
+  analogWrite(fra, s1);
+  analogWrite(fla, s2);
+  analogWrite(bla, s3);
+  analogWrite(bra, s4);
 
-
+}
